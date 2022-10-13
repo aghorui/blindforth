@@ -11,10 +11,12 @@
 #include <vector>
 #include <stdint.h>
 
-/**
- * =============================================================================
+/**md
+ * -----------------------------------------------------------------------------
+ *
  * Warning: The text below may change radically as the project progresses.
- * =============================================================================
+ *
+ * -----------------------------------------------------------------------------
  *
  * Hi, welcome to BlindForth.
  *
@@ -31,9 +33,11 @@
  * in it look somewhat like this:
  *
  * Adding 1 and 2 and printing it:
+ *
  *     1 2 + print_stack_top
  *
  * Adding 3 and 4 then multiplying by 2:
+ *
  *     2 4 3 + * print_stack_top
  *
  * (I am not sure whether `print_stack_top` exists or not)
@@ -43,9 +47,11 @@
  * them), which use a prefix notation of commands:
  *
  * Adding 1 and 2 and printing it:
+ *
  *     (display (+ 1 2))
  *
  * Adding 3 and 4 then multiplying by 2:
+ *
  *     (display (* (+ 4 3) 2))
  *
  * You might be able to form a mental image of what is happening in the Forth
@@ -150,7 +156,8 @@
  *
  */
 
-/**
+/**md
+ *
  * Part 1: The Tokenizer or Lexical Analyzer
  * ==========================================
  *
@@ -333,37 +340,37 @@
  * intermediate code generation - Generate platform independent intermediate code for your program
  * code optimization - Attempt to make your program more efficient
  * machine code generation - generate a ".exe"
- * ---
+ * ----
  *
  */
 
-/**
+/**md
  * For BlindForth, we will write a program that is very blatantly a finite state
  * automaton. Let's do so by first defining what sort of tokens BlindForth
  * will have:
  *
- *       Integers - All non-decimal Numbers (..., -1, 0, 1, 2, 3, 4, ...)
- *          Reals - Real Numbers, with decimals. (1, 1.3, 3.142, -2.718, etc.)
- *         String - Quote delimited strings ('apple', "ball", ....)
- *    Identifiers - Variable and function names and everything else (apple_1, *, /)
- * Debug commands - Identifiers, but prefixed with a colon. I intend these to
- *                  be ignored by a compiler or allow macro statements.
- *                  (:break, :stack_trace, ...)
+ *           Integers - All non-decimal Numbers (..., -1, 0, 1, 2, 3, 4, ...)
+ *              Reals - Real Numbers, with decimals. (1, 1.3, 3.142, -2.718, etc.)
+ *             String - Quote delimited strings ('apple', "ball", ....)
+ *        Identifiers - Variable and function names and everything else (apple_1, *, /)
+ *     Debug commands - Identifiers, but prefixed with a colon. I intend these to
+ *                      be ignored by a compiler or allow macro statements.
+ *                      (:break, :stack_trace, ...)
  *
  * Note that in BlindForth, we do not define the concept of operators and
- * their syntax, similar to lisp and other functional programming languages.
+ * their syntax, similar to lisp.
  *
  * Let's define a few terms first:
- * "Symbol": By "Symbol," I mean a UTF-8 Character.
- * "Any Symbol": By "Any Symbol", I mean any valid UTF-8 Character.
- * "Any Visible Symbol": By "Any Visible Symbol", I mean any non control,
- * non-whitespace UTF-8 Character. More rigidly, if the symbol's unicode value
- * is `c`, then: `(c >= U+0021 && c <= U+007E) || (c >= 00A1)`
+ * * ''Symbol'': By "Symbol," I mean a UTF-8 Character.
+ * * ''Any Symbol'': By "Any Symbol", I mean any valid UTF-8 Character.
+ * * ''Any Visible Symbol'': By "Any Visible Symbol", I mean any non control,
+ *   non-whitespace UTF-8 Character. More rigidly, if the symbol's unicode value
+ *   is `c`, then: `(c >= U+0021 && c <= U+007E) || (c >= 00A1)`
  *
  * Now, let's give a proper definition of the grammar of each one of the
  * tokens:
  *
- * Integers:
+ * ## Integers:
  *  * All integers consist of one or more symbols
  *  * An integer is composed only of the following symbols:
  *      1, 2, 3, 4, 5, 6, 7, 8, 9, 0, -, +
@@ -375,7 +382,7 @@
  *
  * <DIAGRAM>
  *
- * Reals:
+ * ## Reals:
  *  * All reals consist of one or more symbols
  *  * An real is composed only of the following symbols:
  *      1, 2, 3, 4, 5, 6, 7, 8, 9, 0, -, +, .
@@ -392,7 +399,7 @@
  *
  * <DIAGRAM>
  *
- * Strings:
+ * ## Strings:
  * * A string always starts and ends with the symbol "'" (single quote, or
  *   always starts and ends with the symbol " " " (double quote).
  * * A String may contain any symbol. However, no symbol except for the
@@ -403,14 +410,14 @@
  *
  * <DIAGRAM>
  *
- * Identifiers:
+ * ## Identifiers:
  * * An identifier is composed of any visible symbol except for its first
  *   symbol.
  * * The first symbol of an identifier is any symbol except for ":" (colon)
  *
  * <DIAGRAM>
  *
- * Debug Commands:
+ * ## Debug Commands:
  * * The first symbol of a debug command is always ":" (colon)
  * * An identifier is composed of any visible symbol except for its first
  *   symbol.
