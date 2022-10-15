@@ -14,7 +14,6 @@ DOC_NAMES: List[Dict] = [
 ]
 
 
-
 # Regexes
 md_comment_start: re.Pattern          = re.compile(r'^\/\*\*md(.*)$')
 md_comment_end: re.Pattern            = re.compile(r'^(.*)\*\/(.*)$')
@@ -43,6 +42,7 @@ def prepare_document(src) -> str:
 
 		# If we are starting out with the document, detect if this first is a
 		# markdown comment and if not, start a code block.
+		# TODO Place this out of the loop.
 		if state == State.NOBLOCK_START:
 			m = md_comment_start.match(line)
 			if m:
@@ -70,7 +70,7 @@ def prepare_document(src) -> str:
 				m = md_comment_start.match(line)
 				if m:
 					#DEBUG print("start matched")
-					#DEBUG print("Error at line " + str(linecount) + ": Repeated comment start sequence.")
+					print("Error at line " + str(linecount) + ": Repeated comment start sequence.")
 					return ""
 
 				# Commen end matching. Takes precedence over prefix match.
@@ -120,14 +120,20 @@ def main():
 		except FileNotFoundError:
 			print("Error: '" + srcpath + "' not found.")
 			return 1
+
 		print("Converting '" + srcpath + "' -> '" + destpath + "'")
-		text = prepare_document(file)
+		text: str = prepare_document(file)
+		if text == '':
+			print("Exiting due to error.")
+			return 2
+
 		try:
 			dest = open(destpath, 'w')
 		except IOError:
 			print("Error: Could not open '" + destpath + "'.")
 			return 1
 		dest.write(text)
+
 		dest.close()
 		file.close()
 
