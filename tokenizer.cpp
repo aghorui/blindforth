@@ -400,12 +400,12 @@
  * <DIAGRAM>
  *
  * ## Strings:
- * * A string always starts and ends with the symbol "'" (single quote, or
- *   always starts and ends with the symbol " " " (double quote).
+ * * A string always starts and ends with the symbol `'` (single quote, or
+ *   always starts and ends with the symbol ` " ` (double quote).
  * * A String may contain any symbol. However, no symbol except for the
- *   starting symbol may be "'" (single quote), if the starting symbol is
- *   "'" (single quote), or " " " (double quote), if the starting symbol is
- *   " " " (double quote). <Note: This will change later to replicate C-style
+ *   starting symbol may be ` ' ` (single quote), if the starting symbol is
+ *   ` ' ` (single quote), or ` " ` (double quote), if the starting symbol is
+ *   ` " ` (double quote). <Note: This will change later to replicate C-style
  *   string notation with escapes.>
  *
  * <DIAGRAM>
@@ -413,7 +413,8 @@
  * ## Identifiers:
  * * An identifier is composed of any visible symbol except for its first
  *   symbol.
- * * The first symbol of an identifier is any symbol except for ":" (colon)
+ * * The first symbol of an identifier is any visible symbol except for `:`
+ *   (colon), or a digit (`0`...`9`).
  *
  * <DIAGRAM>
  *
@@ -428,10 +429,10 @@
  * Matching Tokens
  * ===============
  *
- * A question might come to your mind is how do we signify an "end" to any of
- * these finite automata to store them for further processing, since they look
- * like they will seemingly run endlessly given that the correct input is always
- * supplied.
+ * A question that might come to your mind is how do we signify an "end" to any
+ * of these finite automata to store them for further processing, since they
+ * look like they will seemingly run endlessly given that the correct input is
+ * always supplied.
  *
  * Having a look at other languages gives us hints, for example, in C, this
  * is a valid expression, and the compiler is able to differentiate between
@@ -454,8 +455,122 @@
  * whitespace. This is somewhat similar to lisp, wherein statements are made in
  * brackets, and parameters or arguments are separated by whitespace.
  *
- * 
+ * Output
+ * ======
  *
+ * Our final output in this case is a list of tokens that contain the value read
+ * from the raw input, and marked by what they are.
+ *
+ * In case of errors, the output should be the error.
+ *
+ * In the end, the output should contain enough information that our compiler
+ * won't have to make another trip to the supplied raw user input.
+ *
+ * Implementation
+ * ==============
+ *
+ * We will now combine each of the above definitions of finite automata
+ * into a singular program: our tokenizer. This program will run on repeat till
+ * the user input ends. Here's a rough algorithm of what we're trying to
+ * implement:
+ *
+ *     While input is not exhausted:
+ *         Read a symbol `S`
+ *
+ *         Switch (state)
+ *             case Integer:
+ *                 if `S` is not a digit or a decimal, throw error
+ *                 else if `S` is a dot, switch state to Real
+ *                 else if `S` is a digit, store and continue.
+ *             (...)
+ *
+ *         (...)
+ *
+ *         if current token is completed:
+ *             Store and append to token list
+ *
+ * The Transition Table
+ * ====================
+ *
+ * We will represent the combined finite automata as a transition table.
+ *
+ * This table will list all the ways state will be changed in the program and
+ * what 'actions' will the program perform on encountering a symbol.
+ *
+ * There are 4 actions that the tokenizer will perform:
+ *
+ *  * Do Nothing (''NOP'')
+ *  * Iteratively store the current token as the symbols are being read. (''Build'')
+ *  * Store the completed symbol in our list. (''Store'')
+ *  * Throw an error. (''Error'')
+ *
+ * Let's also define the symbols and classes of symbols that the tokenizer will
+ * accept:
+ *
+ *  * Whitespace: Spaces (` `), Tabs (`\t`), New Lines (`\n`), Carriage Returns (`\r`)
+ *  * Anything: Any possible unicode character.
+ *  * Digit: Symbols `0` through `9`
+ *  * Plus: `+`
+ *  * Minus: `-`
+ *  * Dot: `.`
+ *  * Colon: `:`
+ *  * Single Quote: `'`
+ *  * Double Quote: `"`
+ *  * Idchar: Any Visible Symbol (`(c >= U+0021 && c <= U+007E) || (c >= 00A1)`) except W
+ *  * Idalpha: Any Visible Symbol except Whitespace, Digit, `"`, `'`, `:`, and `.`
+ *  * Dbgchar: Any of: `A`-`Z`, `a`-`z`, `_`, and `0`-`9`
+ *  * EOF: Symbolic representation of End-Of-File
+ *
+ * Finally, let's give names to the states the tokenizer will transfer between:
+ *
+ *  * None - A Default State
+ *  * Id   - Identifier
+ *  * Int  - Integer
+ *  * Str  - String
+ *  * Dbg  - Debug
+ *  * End  - End of Tokenization
+ *  * Err  - Error State
+ *
+ * Eventually, with some thinking, you will end up with a table that looks like
+ * this. Any possible transition that is not in this table is a transition to
+ * the error state.:
+ *
+ * |State     |Input                              |Action          |Next      |
+ * |----------|-----------------------------------|----------------|----------|
+ * |None      |Whitespace                         |NOP             |None      |
+ * |None      |Idalpha                            |NOP             |Id        |
+ * |None      |Digit                              |NOP             |Int       |
+ * |None      |Single/Double Quote                |NOP             |Str       |
+ * |None      |Colon                              |NOP             |Dbg       |
+ * |None      |Dot                                |NOP             |Real      |
+ * |None      |EOF                                |Store           |End       |
+ * |Id        |Idchar                             |Build           |Id        |
+ * |Id        |Whitespace                         |Store           |None      |
+ * |Id        |EOF                                |Store           |End       |
+ * |Int       |Digit                              |Build           |Int       |
+ * |Int       |Dot                                |Build           |Real      |
+ * |Int       |Whitespace                         |Store           |None      |
+ * |Int       |EOF                                |Store           |End       |
+ * |Real      |Whitespace                         |Store           |None      |
+ * |Real      |EOF                                |Store           |End       |
+ * |Str       |Anything except `"` or `'` (Quotes)|Build           |Str       |
+ * |Str       |Single/Double Quote                |Store           |End       |
+ * |Dbg       |Dbgchar                            |Build           |Dbg       |
+ * |Dbg       |Whitespace                         |Store           |None      |
+ * |Dbg       |EOF                                |Store           |End       |
+ *
+ * ### Note
+ *
+ * > I haven't introduced string escape sequences here. I'll add them in this
+ * > section later when I'm done with the actual program.
+ *
+ *
+ * We will encode this transition table as a matrix, where rows and columns
+ * describe a state and an input character respectively, and a value at the
+ * nth row and the mth column describe the state to transition to, at the
+ * current state and input.
+ *
+ * Let's finally get to the code:
  */
 
 typedef enum SymbolType {
@@ -501,7 +616,7 @@ typedef enum TokenInput {
 	TOKEN_INPUT_DOUBLEQUOTE = 5,
 	TOKEN_INPUT_SINGLEQUOTE = 6,
 	TOKEN_INPUT_COLON       = 7,
-	TOKEN_INPUT_BACKSLASH   = 8,
+	TOKEN_INPUT_BACKSLASH   = 8, // unused for now.
 	TOKEN_INPUT_OTHER       = 9,
 	TOKEN_INPUT_SIZE
 } TokenInput;
