@@ -9,6 +9,7 @@
  */
 
 #include <vector>
+#include <stdio.h>
 #include <stdint.h>
 
 /**md
@@ -154,9 +155,6 @@
  *
  * To
  *
- */
-
-/**md
  *
  * Part 1: The Tokenizer or Lexical Analyzer
  * ==========================================
@@ -559,28 +557,56 @@
  * |Dbg       |Whitespace                         |Store           |None      |
  * |Dbg       |EOF                                |Store           |End       |
  *
- * ### Note
- *
+ * > Note:
  * > I haven't introduced string escape sequences here. I'll add them in this
  * > section later when I'm done with the actual program.
- *
  *
  * We will encode this transition table as a matrix, where rows and columns
  * describe a state and an input character respectively, and a value at the
  * nth row and the mth column describe the state to transition to, at the
  * current state and input.
  *
- * Let's finally get to the code:
+ * Let's finally get to the code.
+ *
+ * ## Note
+ *
+ * All of these Markdown documents are written such that, if you were to join
+ * all of the code blocks that start and end with ` ``` `, you will end up
+ * with a valid C++ program. Therefore all of the code blocks here are written
+ * in their logical, sequential order.
+ *
  */
 
-typedef enum SymbolType {
-	SYMBOLTYPE_NONE          = 0,
-	SYMBOLTYPE_INT           = 1,
-	SYMBOLTYPE_REAL          = 2,
-	SYMBOLTYPE_STRING        = 3,
-	SYMBOLTYPE_ID            = 4,
-	SYMBOLTYPE_DEBUG_COMMAND = 5
-} SymbolType;
+/**md
+ *
+ * ### `enum TokenType`
+ *
+ * `TokenType` lists all of the types of tokens that the tokenizer output will
+ * contain. This includes all the types I discussed earlier, and a default
+ * "none" value that might come in handy.
+ *
+ */
+
+typedef enum TokenType {
+	TOKEN_TYPE_NONE          = 0,
+	TOKEN_TYPE_INT           = 1,
+	TOKEN_TYPE_REAL          = 2,
+	TOKEN_TYPE_STRING        = 3,
+	TOKEN_TYPE_ID            = 4,
+	TOKEN_TYPE_DEBUG_COMMAND = 5
+} TokenType;
+
+/**md
+ *
+ * ### `enum TokenState`
+ *
+ * `TokenState` lists all the states that the tokenizer will be in. One slight
+ * deviation I have made here is that there are separate states for maintaining
+ * single-quoted strings and double-quoted strings. This simplifies our code
+ * slightly by not having to maintain a variable to remember whether this is
+ * a single or double quoted string.
+ *
+ */
 
 typedef enum TokenState {
 	TOKEN_STATE_END           = 0,
@@ -592,20 +618,37 @@ typedef enum TokenState {
 	TOKEN_STATE_ID            = 6,
 	TOKEN_STATE_DEBUG         = 7,
 	TOKEN_STATE_ERROR         = 8,
-	TOKEN_STATE_SIZE
+	TOKEN_STATE_SIZE // This simply marks the number of enum values
 } TokenState;
+
+/**md
+ *
+ * ### `struct TokenError`
+ *
+ * `TokenError` is returned when the tokenizer encounters any erroneous input.
+ * It returns the current position in the input (`current_offset`), the line
+ * number (`line_pos`) and the column position (`col_pos`), and the current
+ * type of the token that the
+ *
+ */
 
 typedef struct TokenError {
 	int current_offset;
+	int line_pos;
+	int col_pos;
 	TokenState current_guess;
 } Tokenerror;
 
-typedef struct TokenResult {
-	TokenError error;
-	std::vector<int> start_offsets;
-	std::vector<int> end_offsets;
-	std::vector<SymbolType> types;
-} TokenResult;
+
+/**md
+ *
+ * ### `struct TokenInput`
+ *
+ * `TokenInput` contains the possible types of input that the tokenizer will
+ * receive.
+ *
+ */
+
 
 typedef enum TokenInput {
 	TOKEN_INPUT_EOF         = 0,
@@ -615,17 +658,52 @@ typedef enum TokenInput {
 	TOKEN_INPUT_DOT         = 4,
 	TOKEN_INPUT_DOUBLEQUOTE = 5,
 	TOKEN_INPUT_SINGLEQUOTE = 6,
-	TOKEN_INPUT_COLON       = 7,
-	TOKEN_INPUT_BACKSLASH   = 8, // unused for now.
-	TOKEN_INPUT_OTHER       = 9,
-	TOKEN_INPUT_SIZE
+	TOKEN_INPUT_SIGN        = 7,
+	TOKEN_INPUT_COLON       = 8,
+	TOKEN_INPUT_BACKSLASH   = 9, // unused for now.
+	TOKEN_INPUT_IDCHAR      = 10,
+	TOKEN_INPUT_OTHER       = 11,
+	TOKEN_INPUT_SIZE // This simply marks the number of enum values
 } TokenInput;
 
-/**
- * This is the state table.
+/**md
  *
- * We encode the previously shown State Table for use in our tokenizer.
+ * ### `struct TokenResult`
+ *
+ * `TokenResult` is what will be returned by the tokenizer.
+ *
+ * **TODO** this might change.
+ *
  */
+
+typedef struct TokenResult {
+	TokenError error;
+	std::vector<int> start_offsets;
+	std::vector<int> end_offsets;
+	std::vector<TokenType> types;
+} TokenResult;
+
+/**md
+ *
+ * ### The Transition Matrix
+ *
+ * Now that everything that's needed to make the matrix is defined, we can
+ * finally make the transition matrix. I've defined the matrix in this static
+ * array called `states`. The first index (row) of `states` holds the current
+ * state, and the second index holds the current input. Therefore the state that
+ * the tokenizer needs to transfer to when the current state is `i` and the
+ * current input is `j`, is `states[i][j]`.
+ *
+ * To make the code more manageable and readable, each row of the array is
+ * split into separate blocks, and the states/input have been marked with
+ * comments for convenience.
+ *
+ * The reason I am able to do this in such a symbolic manner is because enum
+ * values correspond to actual integer values in C++, which can be set
+ * explicitly and known at compile time.
+ *
+ */
+
 uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 	/* TOKEN_STATE_NONE */
 	{
@@ -726,9 +804,93 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 	},
 };
 
-// TokenInput get_input(char input) {
-// 	return TOKEN_INPUT_EOF;
-// }
+/**md
+ *
+ * ### Function `get_input`
+ *
+ * `get_input` takes actual user input characters and returns the correct
+ * `TokenInput` value for it. That value is then used by the tokenizer to take
+ * decisions.
+ *
+ */
+
+TokenInput get_input(int input)
+{
+	TokenInput ret;
+
+	// We first try matching any of the single-character input types, then
+	// move on to the range-based ones.
+
+	if (input == EOF) {
+		return TOKEN_INPUT_EOF;
+	}
+
+	switch (input) {
+	case ' ':
+	case '\r':
+	case '\n':
+	case '\t':
+		return TOKEN_INPUT_WHITESPACE;
+		break;
+
+	case '.':
+		return TOKEN_INPUT_DOT;
+		break;
+
+	case '\0':
+		return TOKEN_INPUT_EOF;
+		break;
+
+	case ':':
+		return TOKEN_INPUT_COLON;
+		break;
+
+	case '\\':
+		return TOKEN_INPUT_BACKSLASH;
+		break;
+
+	case '_':
+		return TOKEN_INPUT_ALPHABET;
+		break;
+
+	case '+':
+	case '-':
+		return TOKEN_INPUT_SIGN;
+		break;
+
+	case '\"':
+		return TOKEN_INPUT_DOUBLEQUOTE;
+		break;
+
+	case '\'':
+		return TOKEN_INPUT_SINGLEQUOTE;
+		break;
+	}
+
+	// Match number
+
+	if (input >= '0' && input <= '9') {
+		return TOKEN_INPUT_NUMERIC;
+	}
+
+	// Match Alphabet
+
+	if ((input >= 'a' && input <= 'z') ||
+		(input >= 'A' && input <= 'Z')) {
+		return TOKEN_INPUT_ALPHABET;
+	}
+
+	// Match a visible character
+
+	// TODO add UTF-8 Support here. A lookahead of at most 2 bytes is needed
+	// here.
+
+	if ((input >= 0x21 && input <= 0x7E) || (input >= 0xA1)) {
+		return TOKEN_INPUT_IDCHAR;
+	}
+
+	return TOKEN_INPUT_OTHER;
+}
 
 // int tokenize(char *input, int size, TokenResult *list)
 // {
