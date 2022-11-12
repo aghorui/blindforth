@@ -8,9 +8,12 @@
  *
  */
 
+#include <cstdint>
 #include <vector>
 #include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include <assert.h>
 
 /**md
  * -----------------------------------------------------------------------------
@@ -524,6 +527,8 @@
  *  * None - A Default State
  *  * Id   - Identifier
  *  * Int  - Integer
+ *  * Dot  - A single encountered dot
+ *  * Real - Real Numbers
  *  * Str  - String
  *  * Dbg  - Debug
  *  * End  - End of Tokenization
@@ -609,36 +614,19 @@ typedef enum TokenType {
  */
 
 typedef enum TokenState {
-	TOKEN_STATE_END           = 0,
+	TOKEN_STATE_ERROR         = 0,
 	TOKEN_STATE_NONE          = 1,
-	TOKEN_STATE_INT           = 2,
-	TOKEN_STATE_REAL          = 3,
-	TOKEN_STATE_SQUOTE_STRING = 4,
-	TOKEN_STATE_DQUOTE_STRING = 5,
-	TOKEN_STATE_ID            = 6,
-	TOKEN_STATE_DEBUG         = 7,
-	TOKEN_STATE_ERROR         = 8,
+	TOKEN_STATE_SIGN          = 2,
+	TOKEN_STATE_INT           = 3,
+	TOKEN_STATE_DOT           = 4,
+	TOKEN_STATE_REAL          = 5,
+	TOKEN_STATE_SQUOTE_STRING = 6,
+	TOKEN_STATE_DQUOTE_STRING = 7,
+	TOKEN_STATE_ID            = 8,
+	TOKEN_STATE_DEBUG         = 9,
+	TOKEN_STATE_END           = 10,
 	TOKEN_STATE_SIZE // This simply marks the number of enum values
 } TokenState;
-
-/**md
- *
- * ### `struct TokenError`
- *
- * `TokenError` is returned when the tokenizer encounters any erroneous input.
- * It returns the current position in the input (`current_offset`), the line
- * number (`line_pos`) and the column position (`col_pos`), and the current
- * type of the token that the
- *
- */
-
-typedef struct TokenError {
-	int current_offset;
-	int line_pos;
-	int col_pos;
-	TokenState current_guess;
-} Tokenerror;
-
 
 /**md
  *
@@ -666,22 +654,152 @@ typedef enum TokenInput {
 	TOKEN_INPUT_SIZE // This simply marks the number of enum values
 } TokenInput;
 
+
+/**md
+ *
+ * ## `union TokenData`
+ *
+ * This is what we will store our token data. It's a union, which allows us to
+ * reuse the same storage for different things.
+ *
+ * Identifiers and strings are stored here using allocated pointers. The reason
+ * this works is because both identifiers and strings are a string of
+ * characters.
+ */
+
+typedef union TokenData {
+	int64_t i;
+	double r;
+	void *s;
+} TokenData;
+
+/**md
+ *
+ * ## `struct Token`
+ *
+ * This is what we will store our token data. It's a union, which allows us to
+ * reuse the same storage for different things.
+ *
+ * Identifiers and strings are stored here using allocated pointers. The reason
+ * this works is because both identifiers and strings are a string of
+ * characters.
+ */
+
+
+typedef struct Token {
+	TokenType type;
+	TokenData data;
+} Token;
+
+/**md
+ *
+ * ### `struct TokenError`
+ *
+ * `TokenError` is returned when the tokenizer encounters any erroneous input.
+ * It returns the current position in the input (`current_offset`), the line
+ * number (`line_pos`) and the column position (`col_pos`), and the current
+ * type of the token that the
+ *
+ */
+
+typedef struct TokenError {
+	unsigned int curr_offset;
+	unsigned int line_pos;
+	unsigned int col_pos;
+	TokenState curr_guess;
+	TokenInput curr_input;
+	char curr_input_val;
+} Tokenerror;
+
+
 /**md
  *
  * ### `struct TokenResult`
  *
  * `TokenResult` is what will be returned by the tokenizer.
  *
- * **TODO** this might change.
+ * **TODO** contents of struct might change.
  *
+ * I have used
+ *
+ * String/Symbol storage is handled by allocating a single array, and then copying
+ * the strings to the array along with the null terminator. This prevents us
+ * from doing a large number of calls to malloc, not make data fragment
+ * in memory, forget about freeing data, and so on.
+ *
+ * To explicitly describe the intent, I've aliased the type of the buffer with a
+ * name.
  */
 
+typedef std::vector<char> CharBuffer;
+
 typedef struct TokenResult {
+	unsigned int characters_processed;
+	unsigned int lines_processed;
 	TokenError error;
-	std::vector<int> start_offsets;
-	std::vector<int> end_offsets;
-	std::vector<TokenType> types;
+	CharBuffer buffer;
+	std::vector<Token> tokens;
+
+	TokenResult() {
+		characters_processed = 0;
+		lines_processed = 0;
+	}
 } TokenResult;
+
+/**md
+ * The following functions perform the symbol/string buffer manipulation. This
+ * simplifies later code for us and performs error checking for us as well.
+ *
+ *
+ * ## Function `token_buffer_new`
+ *
+ * This function returns a valid pointer (but not allocated) block of
+ * memory which will be used to store the string/symbol.
+ *
+ * Symbols/strings are allocated in a sequential manner and one after the
+ * another.
+ */
+
+static inline void *token_buffer_new(std::vector<char>& buffer)
+{
+	if (buffer.empty()) {
+		// Reserve a buffer size to reduce allocation frequency.
+		// This is an arbitrary value.
+		buffer.reserve(512);
+	}
+
+	// Insert a null character so we get a pointer to buffer[0]
+	buffer.push_back('\0');
+	return &buffer.back();
+}
+
+/**md
+ *
+ * ## Function `token_buffer_insert`
+ *
+ * This function inserts a char value to the current buffer pointed to. If
+ * insertion fails it returns a value less than 0.
+ */
+
+static inline int token_buffer_insert(std::vector<char>& buffer, char c)
+{
+	buffer.push_back(c);
+	return 0;
+}
+
+/**md
+ *
+ * ## Function `token_buffer_end`
+ *
+ * This ends the current buffer. It inserts a trailing null ('\0') character
+ * into the buffer and returns a pointer to the end.
+ */
+
+static inline void *token_buffer_end(std::vector<char>& buffer)
+{
+	buffer.push_back('\0');
+	return &buffer.back();
+}
 
 /**md
  *
@@ -705,31 +823,84 @@ typedef struct TokenResult {
  */
 
 uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
+	/* TOKEN_STATE_ERROR */
+	// TODO Remove this from the list by setting it to -1.
+	{
+		TOKEN_STATE_ERROR, // EOF
+		TOKEN_STATE_ERROR, // WHITESPACE
+		TOKEN_STATE_ERROR, // ALPHABET
+		TOKEN_STATE_ERROR, // NUMERIC
+		TOKEN_STATE_ERROR, // DOT
+		TOKEN_STATE_ERROR, // DOUBLEQUOTE
+		TOKEN_STATE_ERROR, // SINGLEQUOTE
+		TOKEN_STATE_ERROR, // SIGN
+		TOKEN_STATE_ERROR, // COLON
+		TOKEN_STATE_ERROR, // BACKSLASH
+		TOKEN_STATE_ERROR, // IDCHAR
+		TOKEN_STATE_ERROR  // OTHER
+	},
+
 	/* TOKEN_STATE_NONE */
 	{
 		TOKEN_STATE_END,           // EOF
 		TOKEN_STATE_NONE,          // WHITESPACE
 		TOKEN_STATE_ID,            // ALPHABET
 		TOKEN_STATE_INT,           // NUMERIC
-		TOKEN_STATE_REAL,          // DOT
+		TOKEN_STATE_DOT,           // DOT
 		TOKEN_STATE_DQUOTE_STRING, // DOUBLEQUOTE
 		TOKEN_STATE_SQUOTE_STRING, // SINGLEQUOTE
+		TOKEN_STATE_SIGN,          // SIGN
 		TOKEN_STATE_DEBUG,         // COLON
 		TOKEN_STATE_ERROR,         // BACKSLASH
-		TOKEN_STATE_ID             // OTHER
+		TOKEN_STATE_ID,            // IDCHAR
+		TOKEN_STATE_ERROR          // OTHER
+	},
+
+	/* TOKEN_STATE_SIGN */
+	{
+		TOKEN_STATE_END,    // EOF
+		TOKEN_STATE_NONE,   // WHITESPACE
+		TOKEN_STATE_ERROR,  // ALPHABET
+		TOKEN_STATE_INT,    // NUMERIC
+		TOKEN_STATE_DOT,    // DOT
+		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
+		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
+		TOKEN_STATE_ERROR,  // COLON
+		TOKEN_STATE_ERROR,  // BACKSLASH
+		TOKEN_STATE_ERROR,  // IDCHAR
+		TOKEN_STATE_ERROR   // OTHER
 	},
 
 	/* TOKEN_STATE_INT */
 	{
 		TOKEN_STATE_END,    // EOF
 		TOKEN_STATE_NONE,   // WHITESPACE
-		TOKEN_STATE_ID,     // ALPHABET
+		TOKEN_STATE_ERROR,  // ALPHABET
 		TOKEN_STATE_INT,    // NUMERIC
-		TOKEN_STATE_REAL,   // DOT
+		TOKEN_STATE_DOT,    // DOT
 		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
 		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
 		TOKEN_STATE_ERROR,  // COLON
 		TOKEN_STATE_ERROR,  // BACKSLASH
+		TOKEN_STATE_ERROR,  // IDCHAR
+		TOKEN_STATE_ERROR   // OTHER
+	},
+
+	/* TOKEN_STATE_DOT */
+	{
+		TOKEN_STATE_ERROR,  // EOF
+		TOKEN_STATE_ERROR,  // WHITESPACE
+		TOKEN_STATE_ERROR,  // ALPHABET
+		TOKEN_STATE_REAL,   // NUMERIC
+		TOKEN_STATE_ERROR,  // DOT
+		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
+		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
+		TOKEN_STATE_ERROR,  // COLON
+		TOKEN_STATE_ERROR,  // BACKSLASH
+		TOKEN_STATE_ERROR,  // IDCHAR
 		TOKEN_STATE_ERROR   // OTHER
 	},
 
@@ -742,8 +913,10 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 		TOKEN_STATE_ERROR,  // DOT
 		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
 		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
 		TOKEN_STATE_ERROR,  // COLON
 		TOKEN_STATE_ERROR,  // BACKSLASH
+		TOKEN_STATE_ERROR,  // IDCHAR
 		TOKEN_STATE_ERROR   // OTHER
 	},
 
@@ -756,8 +929,10 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 		TOKEN_STATE_DQUOTE_STRING, // DOT
 		TOKEN_STATE_NONE,          // DOUBLEQUOTE
 		TOKEN_STATE_DQUOTE_STRING, // SINGLEQUOTE
+		TOKEN_STATE_DQUOTE_STRING, // SIGN
 		TOKEN_STATE_DQUOTE_STRING, // COLON
 		TOKEN_STATE_DQUOTE_STRING, // BACKSLASH
+		TOKEN_STATE_DQUOTE_STRING, // IDCHAR
 		TOKEN_STATE_DQUOTE_STRING, // OTHER
 	},
 
@@ -770,8 +945,10 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 		TOKEN_STATE_SQUOTE_STRING, // DOT
 		TOKEN_STATE_SQUOTE_STRING, // DOUBLEQUOTE
 		TOKEN_STATE_NONE,          // SINGLEQUOTE
+		TOKEN_STATE_SQUOTE_STRING, // SIGN
 		TOKEN_STATE_SQUOTE_STRING, // COLON
 		TOKEN_STATE_SQUOTE_STRING, // BACKSLASH
+		TOKEN_STATE_SQUOTE_STRING, // IDCHAR
 		TOKEN_STATE_SQUOTE_STRING, // OTHER
 	},
 
@@ -784,9 +961,11 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 		TOKEN_STATE_ERROR,  // DOT
 		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
 		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
 		TOKEN_STATE_ERROR,  // COLON
 		TOKEN_STATE_ERROR,  // BACKSLASH
-		TOKEN_STATE_ID,     // OTHER
+		TOKEN_STATE_ID,     // IDCHAR
+		TOKEN_STATE_ERROR,  // OTHER
 	},
 
 	/* TOKEN_STATE_DEBUG */
@@ -798,15 +977,17 @@ uint8_t states[TOKEN_STATE_SIZE][TOKEN_INPUT_SIZE] = {
 		TOKEN_STATE_ERROR,  // DOT
 		TOKEN_STATE_ERROR,  // DOUBLEQUOTE
 		TOKEN_STATE_ERROR,  // SINGLEQUOTE
+		TOKEN_STATE_ERROR,  // SIGN
 		TOKEN_STATE_ERROR,  // COLON
 		TOKEN_STATE_ERROR,  // BACKSLASH
-		TOKEN_STATE_DEBUG   // OTHER
+		TOKEN_STATE_ERROR,  // IDCHAR
+		TOKEN_STATE_ERROR   // OTHER
 	},
 };
 
 /**md
  *
- * ### Function `get_input`
+ * ### Function `get_input` (unexported)
  *
  * `get_input` takes actual user input characters and returns the correct
  * `TokenInput` value for it. That value is then used by the tokenizer to take
@@ -892,14 +1073,303 @@ TokenInput get_input(int input)
 	return TOKEN_INPUT_OTHER;
 }
 
-// int tokenize(char *input, int size, TokenResult *list)
-// {
-// 	for (int i = 0; i < size; i++) {
-// 		switch (input[i]) {
-// 			case ' ':
-// 			case '\t':
-// 			case '\n':
 
-// 		}
-// 	}
-// }
+/**md
+ *
+ * ## Tokenizer Build functions
+ *
+ * These functions help us in building the currently concerned token. These
+ * help us in doing tasks like converting a string segment to an integer,
+ * to a float, storing an identifier and so on.
+ *
+ * We have defined a part of these set of required functions before, which
+ * are the `token_buffer_*` functions.
+ *
+ */
+
+/**md
+ *
+ * ### Function `init_token` (unexported)
+ *
+ * This function set the token type to the supplied parameter and the token
+ * data to zero. Note that setting token data to zero is unnecessary for a
+ * few of the token types (strings, other token types that need a pointer), so
+ * this function may be broken down into a few other specialised functions for
+ * other token types for the sake of efficiency.
+ *
+ */
+
+void init_token(Token &token, TokenType type)
+{
+	token.type = type;
+	memset(&token.data, 0, sizeof(token.data));
+}
+
+/**md
+ *
+ * ### Function `build_int` (unexported)
+ *
+ * This builds a standard base 10 integer from a string of characters in the way
+ * you would expect. `c` is the current character to append to the token. The
+ * return value returns a value less than 0 if the current token integer is
+ * overflowing.
+ *
+ */
+
+int build_int(Token &token, int c)
+{
+	// A custom assert may be used later to allow for prettier printing and
+	// omission in release builds.
+	assert(c >= '0');
+	if (token.data.i >= (INT64_MAX - 9)) {
+		return -1;
+	}
+	token.data.i *= 10;
+	token.data.i += c - '0';
+	return 0;
+}
+
+/**md
+ *
+ * ### Function `build_real` (unexported)
+ *
+ * This *attempts* to build a standard IEEE 64 bit floating point. This function
+ * is only used for adding the base 10 mantissa to the number. The integral part
+ * is built by `build_int` until the tokenizer finds the dot.
+ *
+ * Building a function that encompasses all the conformant representations of an
+ * IEEE floating point number is pretty hard actually. They can have a
+ * ridiculous amount of digits. Looking at the implementation of `atof` is a
+ * good place to start.
+ *
+ * What this does is the following:
+ *
+ * 1. At the start, the current `int64` is cast to a `double`.
+ * 2. We then keep appending digits to the number as we did with `int`, while
+ *    keeping track of the number of mantissa places.
+ * 3. At the end of build, we divide the number by 10 to the power of the
+ *    number of mantissa places
+ *
+ * There are a few obvious problems with this impelementation, for example
+ * this does not allow the integram part of the number to be greater than
+ * `INT64_MAX`.
+ *
+ * ** *Correction Due:* **
+ *
+ * Instead of doing the entire "build" phase thing, it may be just a better
+ * idea to keep a string buffer instead, and once the token is complete,
+ * perform the actual conversion.
+ *
+ */
+
+int build_real(Token &token, int c)
+{
+	// A custom assert may be used later to allow for prettier printing and
+	// omission in release builds.
+	assert(c >= '0');
+	if (token.data.r >= ( - 9)) {
+		return -1;
+	}
+	token.data.i *= 10;
+	token.data.i += c - '0';
+	return 0;
+}
+
+
+/**md
+ *
+ * ### Function `tokenize`
+ *
+ * This is the actual tokenizer function.
+ *
+ *
+ * Note how we try to check for all of the actions. From the state diagram
+ * you will notice that there are various actions that are self loops, and
+ * almost all states go to NONE on completion. (etc. etc.)
+ *
+ * The flag `end` specifies whether or not this is the final segment that needs
+ * to be processed.
+ *
+ *
+ * Another interesting thing you might notice is the file line counter I have
+ * implemented here. You might be aware of the differences of the [types of
+ * line ending markers that are used in different operating systems][line-endings],
+ * which text editors (and programs like this one) need to account for.
+ *
+ * I attempt to implement that here as well, and if you look closely, that is
+ * a finite state machine as well. Try drawing the state diagram of the line
+ * counter to expose this fact more clearly.
+ *
+ * [line-endings]: https://en.wikipedia.org/wiki/Newline#Representation
+ *
+ *
+ * TODO add tokenizer state instead?
+ *
+ */
+
+int tokenize(char *input, int size, bool end, TokenResult &result)
+{
+	TokenState curr_state = TOKEN_STATE_NONE;
+	Token token;
+
+	bool line_ending_check = false;
+	unsigned int col_pos = 0;
+
+	CharBuffer &buffer = result.buffer;
+
+	result.characters_processed = 0;
+	result.lines_processed = 0;
+
+
+	// state-specific variables
+	bool sign = false;
+
+	for (int i = 0; i < size; i++) {
+		TokenInput curr_input = get_input(input[i]);
+		TokenState next_state = (TokenState) states[curr_state][curr_input];
+		result.characters_processed++;
+
+		/**
+		 *
+		 * We have to count a line ending if:
+		 * - There's a sequence that looks like '\r' (Old MacOS)
+		 * - There's a sequence that looks like '\n' (New MacOS, Linux)
+		 * - There's a sequence that looks like '\r\n' (Windows)
+		 * This will cover virtually all of the platforms it will run on.
+		 *
+		 * Currently this doesn't run further analysis to determine the line
+		 * ending convention the file is using, so it will interpret all
+		 * such sequences as valid line endings.
+		 */
+		if (input[i] == '\n') {
+			line_ending_check = false;
+			result.lines_processed += 1;
+			col_pos = 0;
+		} else if (input[i] == '\r') {
+			// line_ending_check only gets activated on input being '\r'
+
+			// if previous was '\r' and current is '\r', then we incremeent the
+			// line counter and continue checking if there is next in the list.
+			if (line_ending_check) {
+				result.lines_processed += 1;
+				col_pos = 0;
+
+			// else if this is the first one, we turn on the line checker.
+			} else {
+				line_ending_check = true;
+			}
+		} else if (line_ending_check) {
+			// if its any other character, we stop the line checker if active
+			result.lines_processed += 1;
+			line_ending_check = false;
+			col_pos = 0;
+		} else {
+			// otherwise we increment the col pos
+			col_pos++;
+		}
+
+		switch (next_state) {
+		case TOKEN_STATE_ERROR:
+			// If we encounter an error, the program collects what we know about
+			// the problem, where the problem is happening and sends it to the
+			// user.
+			result.error.col_pos = col_pos;
+			result.error.line_pos = result.lines_processed;
+			result.error.curr_guess = curr_state;
+			result.error.curr_input = curr_input;
+			result.error.curr_input_val = input[i];
+			return 1;
+			break;
+
+		case TOKEN_STATE_NONE:
+			// If there's nothing in the input, continue.
+			if (curr_state == next_state) {
+				continue;
+			}
+
+			// Encountering a STATE_NONE means that the current token's content
+			// is over. We now need to end the token building.
+			switch (curr_state) {
+			case TOKEN_STATE_INT:
+				break;
+			case TOKEN_STATE_REAL:
+				break;
+			case TOKEN_STATE_SQUOTE_STRING:
+				break;
+			case TOKEN_STATE_DQUOTE_STRING:
+				break;
+			case TOKEN_STATE_ID:
+				break;
+			case TOKEN_STATE_DEBUG:
+				break;
+
+			default:
+			//error here.
+				break;
+			}
+			break;
+
+		case TOKEN_STATE_SIGN:
+			// Ideally this should be two states, not one. Instead of adding
+			// states called SIGN_PLUS and SIGN_MINUS, in this state we store
+			// the sign value in a separate boolean variable. if there is a
+			// minus sign, we turn on the sign value.
+			sign = true;
+			break;
+
+		case TOKEN_STATE_INT:
+			// Check if currstate == nextstate. If so, build. If not, start.
+
+		case TOKEN_STATE_DOT:
+			// We don't have to do anything here. Just wait for the state
+			// machine to pick the correct thing wrt input
+
+		case TOKEN_STATE_REAL:
+			// Check if currstate == nextstate. If so, build. If not, start.
+			// In all cases, currstate should be STATE_DOT here. Add a debug
+			// check for that.
+
+		case TOKEN_STATE_SQUOTE_STRING:
+			// Check if currstate == nextstate. If so, build. If not, start.
+			// Unlike the other cases here, the start phase only results in the
+			// creation of an empty string with no addition of data.
+
+		case TOKEN_STATE_DQUOTE_STRING:
+			// Check if currstate == nextstate. If so, build. If not, start.
+			// Unlike the other cases here, the start phase only results in the
+			// creation of an empty string with no addition of data.
+
+		case TOKEN_STATE_ID:
+			// Check if currstate == nextstate. If so, build. If not, start.
+
+		case TOKEN_STATE_DEBUG:
+			// Check if currstate == nextstate. If so, build. If not, start.
+			// Unlike the other cases here, the start phase only results in the
+			// creation of the token entry but the identifier remains empty at
+			// the start
+			if (curr_state == next_state) { // build
+
+			}
+			// start building
+			break;
+
+
+		case TOKEN_STATE_END:
+			// By returning 1, we signify that we are done with the tokenization
+			return 1;
+			break;
+
+		default:
+			printf("Invalid state encountered.\n");
+			return -1; // We signify invalid states using -1.
+			break;
+		}
+
+	}
+
+	// By returning 0, we signify that we need more data to complete the
+	// tokenization of the current input.
+
+	// Will control ever jump here?
+	return 0;
+}
