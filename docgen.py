@@ -20,16 +20,24 @@ md_comment_end: re.Pattern            = re.compile(r'^(.*)\*\/(.*)$')
 md_comment_prefix: re.Pattern         = re.compile(r'^\ \*\ (.*)$')
 md_comment_prefix_nospace: re.Pattern = re.compile(r'^\ \*(.*)$')
 
+# We use this pattern to match and omit empty lines as needed.
+empty_line: re.Pattern                = re.compile(r'^\s*$')
+
 # Enum sort of thing.
 class State:
 	NOBLOCK_START = 0
 	NOBLOCK = 1
 	START = 2
 
+# TODO: Create separate code block buffer to determine inclusion of blocks.
 def prepare_document(src) -> str:
 	state: int = State.NOBLOCK_START
 	ret: str = ""
 	linecount: int = 0
+
+	# This variable checks whether the leading lines of a noncomment block are
+	# empty or not. This is used to get rid of any leading empty lines.
+	leading_empty: bool = True
 
 	while True:
 		line: str = src.readline()
@@ -45,6 +53,16 @@ def prepare_document(src) -> str:
 		# TODO Place this out of the loop.
 		if state == State.NOBLOCK_START:
 			m = md_comment_start.match(line)
+			empty = empty_line.match(line)
+
+			# Is the line empty and this is a leading line?
+			if empty and leading_empty:
+				# don't do anything.
+				continue
+			elif leading_empty:
+				# there are no more leading empty lines.
+				leading_empty = False
+
 			if m:
 				state = State.START
 				ret += m.group(1) + '\n'
@@ -55,6 +73,16 @@ def prepare_document(src) -> str:
 		# Document-ongoing commentblock detection
 		if state == State.NOBLOCK:
 			m = md_comment_start.match(line)
+			empty = empty_line.match(line)
+
+			# Is the line empty and this is a leading line?
+			if empty and leading_empty:
+				# don't do anything.
+				continue
+			elif leading_empty:
+				# there are no more leading empty lines.
+				leading_empty = False
+
 			if m:
 				state = State.START
 				ret += '```\n'
@@ -62,7 +90,9 @@ def prepare_document(src) -> str:
 			else:
 				ret += line
 
-		# In-comment editing.
+
+
+		# In-comment block.
 		elif state == State.START:
 			# Match all the possible combinations.
 			# This acts like a switch statement.
@@ -80,6 +110,9 @@ def prepare_document(src) -> str:
 					ret += m.group(1) + '\n'
 					ret += '```' + '\n'
 					ret += (m.group(2) + '\n') if m.group(2) != '' else ''
+
+					# Reset leading_empty flag.
+					leading_empty = True
 					state = State.NOBLOCK
 					break
 
